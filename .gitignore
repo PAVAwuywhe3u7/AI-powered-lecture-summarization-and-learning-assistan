@@ -1,0 +1,54 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs
+*.log
+*.out
+*.err
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.python-version
+.venv/
+venv/
+env/
+
+# Node
+node_modules/
+dist/
+.npm/
+.pnpm-store/
+
+# Environment files
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Build / temp artifacts
+tmp/
+temp/
+*.tmp
+smoke-output*.pdf
+
+# Project-specific runtime artifacts
+backend-live.out.log
+backend-live.err.log
+frontend-live.out.log
+frontend-live.err.log
+test-bg.log
+test-bg2.log
+tmp-start.txt
+backend/backend-live.out.log
+backend/backend-live.err.log

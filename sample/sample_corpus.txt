@@ -1,0 +1,16 @@
+﻿Lecture Title: Introduction to Machine Learning
+
+Machine learning is a branch of artificial intelligence that enables systems to learn patterns from data and make predictions or decisions without being explicitly programmed for each scenario.
+
+Key topics covered:
+- Supervised learning and its use of labeled training data.
+- Unsupervised learning and clustering unknown structures.
+- Overfitting versus underfitting and the bias-variance tradeoff.
+- Model evaluation metrics such as accuracy, precision, recall, and F1 score.
+- Practical examples: spam filtering, recommendation engines, medical risk prediction.
+
+Revision checkpoints:
+- Define supervised and unsupervised learning.
+- Explain why train/test splits are required.
+- Identify when precision is more important than recall.
+- Describe overfitting and regularization strategies.
