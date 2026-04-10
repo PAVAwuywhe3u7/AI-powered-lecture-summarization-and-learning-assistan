@@ -9,6 +9,11 @@ Edu Simplify converts lecture sources into structured study material and interac
 - MCQ generation with explanations
 - Exportable PDF revision sheet
 
+## Video Explanation
+
+Project walkthrough video:
+- [Watch or download the video explanation](./docs/video-explanation.mp4)
+
 ## Highlights
 
 - Multiple input modes: YouTube lecture URL, pasted text, text file, PDF
@@ -167,6 +172,9 @@ frontend/
 
 sample/
   sample_corpus.txt
+
+docs/
+  video-explanation.mp4
 ```
 
 ## License
