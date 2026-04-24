@@ -26,7 +26,12 @@ class MongoStore:
 
         with self._lock:
             if self._client is None:
-                self._client = MongoClient(self._uri)
+                self._client = MongoClient(
+                    self._uri,
+                    serverSelectionTimeoutMS=4000,
+                    connectTimeoutMS=4000,
+                    socketTimeoutMS=4000,
+                )
             return self._client
 
     def get_database(self) -> Database:

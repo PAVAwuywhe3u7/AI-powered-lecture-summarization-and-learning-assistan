@@ -9,6 +9,49 @@ import { getErrorMessage } from "../services/api";
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const roleOptions = ["Student", "Employee", "Teacher"];
 
+function EyeIcon({ className }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className={className}>
+      <path
+        d="M2.25 12s3.5-6 9.75-6 9.75 6 9.75 6-3.5 6-9.75 6-9.75-6-9.75-6Z"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.8" />
+    </svg>
+  );
+}
+
+function EyeOffIcon({ className }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className={className}>
+      <path
+        d="M3 3l18 18"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M9.5 5.5A10.9 10.9 0 0 1 12 5.25c6.25 0 9.75 6 9.75 6a17.7 17.7 0 0 1-3.12 3.84M14.12 14.12A3 3 0 0 1 9.88 9.88"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M6.2 6.2C4.08 7.58 2.75 9.75 2.25 10.5c0 0 3.5 6 9.75 6 1.57 0 2.98-.36 4.21-.94"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 function LoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -18,6 +61,8 @@ function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [role, setRole] = useState(roleOptions[0]);
   const [department, setDepartment] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -192,18 +237,34 @@ function LoginPage() {
           <div className={`auth-grid-two ${!isRegister ? "auth-grid-two-single" : ""}`}>
             <label className="auth-input-group">
               <span className="auth-input-label">Password</span>
-              <input
-                type="password"
-                className="auth-field"
-                value={password}
-                onChange={(event) => {
-                  clearErrors();
-                  setPassword(event.target.value);
-                }}
-                placeholder="Minimum 8 characters"
-                autoComplete={isRegister ? "new-password" : "current-password"}
-                required
-              />
+              <div className="auth-password-wrap">
+                <input
+                  type={showPassword ? "text" : "password"}
+                  className="auth-field auth-field-password"
+                  value={password}
+                  onChange={(event) => {
+                    clearErrors();
+                    setPassword(event.target.value);
+                  }}
+                  placeholder="Minimum 8 characters"
+                  autoComplete={isRegister ? "new-password" : "current-password"}
+                  required
+                />
+                <button
+                  type="button"
+                  className="auth-password-toggle"
+                  onClick={() => setShowPassword((current) => !current)}
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                  aria-pressed={showPassword}
+                  title={showPassword ? "Hide password" : "Show password"}
+                >
+                  {showPassword ? (
+                    <EyeOffIcon className="auth-password-icon" />
+                  ) : (
+                    <EyeIcon className="auth-password-icon" />
+                  )}
+                </button>
+              </div>
             </label>
 
             {isRegister && (
@@ -231,18 +292,34 @@ function LoginPage() {
             <div className="auth-grid-two">
               <label className="auth-input-group">
                 <span className="auth-input-label">Confirm Password</span>
-                <input
-                  type="password"
-                  className="auth-field"
-                  value={confirmPassword}
-                  onChange={(event) => {
-                    clearErrors();
-                    setConfirmPassword(event.target.value);
-                  }}
-                  placeholder="Re-enter password"
-                  autoComplete="new-password"
-                  required
-                />
+                <div className="auth-password-wrap">
+                  <input
+                    type={showConfirmPassword ? "text" : "password"}
+                    className="auth-field auth-field-password"
+                    value={confirmPassword}
+                    onChange={(event) => {
+                      clearErrors();
+                      setConfirmPassword(event.target.value);
+                    }}
+                    placeholder="Re-enter password"
+                    autoComplete="new-password"
+                    required
+                  />
+                  <button
+                    type="button"
+                    className="auth-password-toggle"
+                    onClick={() => setShowConfirmPassword((current) => !current)}
+                    aria-label={showConfirmPassword ? "Hide confirm password" : "Show confirm password"}
+                    aria-pressed={showConfirmPassword}
+                    title={showConfirmPassword ? "Hide confirm password" : "Show confirm password"}
+                  >
+                    {showConfirmPassword ? (
+                      <EyeOffIcon className="auth-password-icon" />
+                    ) : (
+                      <EyeIcon className="auth-password-icon" />
+                    )}
+                  </button>
+                </div>
               </label>
 
               <label className="auth-input-group">

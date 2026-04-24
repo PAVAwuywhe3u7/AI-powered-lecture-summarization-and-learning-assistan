@@ -18,6 +18,9 @@ from app.models.schemas import ChatMessage, MCQItem, StructuredSummary
 from app.services.llm_utils import extract_json_payload, normalize_mcq_item, normalize_summary
 from app.services.pipeline_utils import clean_transcript_text, split_into_chunks, validate_structured_summary
 
+SINGLE_PASS_SUMMARY_MAX_CHARS = 7000
+SINGLE_PASS_SUMMARY_MAX_CHUNKS = 2
+
 
 class GeminiService:
     def __init__(self, api_key: str, model_name: str) -> None:
@@ -77,7 +80,11 @@ class GeminiService:
         cleaned = clean_transcript_text(transcript)
         chunks = split_into_chunks(cleaned, max_chars=2500, overlap_chars=240, max_chunks=10)
 
-        if not chunks:
+        if (
+            not chunks
+            or len(cleaned) <= SINGLE_PASS_SUMMARY_MAX_CHARS
+            or len(chunks) <= SINGLE_PASS_SUMMARY_MAX_CHUNKS
+        ):
             data = self._generate_json(build_summary_prompt(cleaned), temperature=0.2)
             return data if isinstance(data, dict) else {}
 

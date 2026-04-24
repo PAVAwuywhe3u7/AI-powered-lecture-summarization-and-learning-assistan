@@ -64,7 +64,7 @@ class ChatResponse(BaseModel):
 class SolverChatRequest(BaseModel):
     message: str = Field(min_length=1)
     history: list[ChatMessage] = Field(default_factory=list)
-    image_data_url: str | None = None
+    image_data_url: str | None = Field(default=None, max_length=11 * 1024 * 1024)
 
 
 class SolverChatResponse(BaseModel):

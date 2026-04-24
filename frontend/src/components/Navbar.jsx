@@ -157,7 +157,7 @@ function Navbar() {
   return (
     <header className="site-nav sticky top-0 z-40">
       <div className="mx-auto flex w-full max-w-[1240px] flex-wrap items-center justify-between gap-3 px-4 py-3 lg:px-6">
-        <Link to="/" className="brand-lockup">
+        <Link to="/studio" className="brand-lockup">
           <span className="brand-mark" aria-hidden="true">
             <BrandMarkIcon className="brand-mark-icon" />
           </span>

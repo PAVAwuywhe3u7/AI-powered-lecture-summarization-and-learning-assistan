@@ -5,10 +5,12 @@ import BotHeader from "./BotHeader";
 import BotMessage from "./BotMessage";
 
 const quickPrompts = [
-  "Solve this with clear step-by-step reasoning.",
-  "Explain the uploaded screenshot and final answer.",
-  "Give the shortest exam method and answer.",
+  "Solve for x: 2x + 5 = 17",
+  "Evaluate: (18 / 3) + 7",
+  "Explain this error: IndexError list index out of range",
 ];
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+const SUPPORTED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 
 function TypingDots() {
   return (
@@ -29,6 +31,7 @@ function SolverChatBox({ messages, onSend, onRetry, isTyping, error }) {
   const [input, setInput] = useState("");
   const [selectedImage, setSelectedImage] = useState(null);
   const [imageName, setImageName] = useState("");
+  const [attachmentError, setAttachmentError] = useState("");
   const [copiedMessageId, setCopiedMessageId] = useState("");
   const messagesEndRef = useRef(null);
   const canSend = Boolean(input.trim() || selectedImage) && !isTyping;
@@ -39,9 +42,24 @@ function SolverChatBox({ messages, onSend, onRetry, isTyping, error }) {
 
   const handleImageChange = (event) => {
     const file = event.target.files?.[0];
-    if (!file || !file.type.startsWith("image/")) {
+    setAttachmentError("");
+    if (!file) {
       setSelectedImage(null);
       setImageName("");
+      return;
+    }
+
+    if (!SUPPORTED_IMAGE_TYPES.has(file.type)) {
+      setSelectedImage(null);
+      setImageName("");
+      setAttachmentError("Use a JPEG, PNG, or WEBP image.");
+      return;
+    }
+
+    if (file.size > MAX_IMAGE_BYTES) {
+      setSelectedImage(null);
+      setImageName("");
+      setAttachmentError("Image is too large. Maximum allowed size is 8 MB.");
       return;
     }
 
@@ -57,6 +75,7 @@ function SolverChatBox({ messages, onSend, onRetry, isTyping, error }) {
   const clearImage = () => {
     setSelectedImage(null);
     setImageName("");
+    setAttachmentError("");
   };
 
   const submitPrompt = async (nextMessage) => {
@@ -113,7 +132,7 @@ function SolverChatBox({ messages, onSend, onRetry, isTyping, error }) {
         actions={(
           <label className="bot-upload-btn focus-ring">
             Upload Image
-            <input type="file" accept="image/*" className="hidden" onChange={handleImageChange} />
+            <input type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={handleImageChange} />
           </label>
         )}
         icon={(
@@ -145,11 +164,13 @@ function SolverChatBox({ messages, onSend, onRetry, isTyping, error }) {
         </div>
       )}
 
+      {attachmentError && <p className="bot-error mb-3" role="alert">{attachmentError}</p>}
+
       <div className="scrollable bot-stream mb-4 flex-1 space-y-3 overflow-y-auto pr-1" role="log" aria-live="polite" aria-busy={isTyping}>
         {messages.length === 0 && (
           <div className="bot-empty bot-empty-centered">
             <p className="bot-empty-title">Try Homework Bot with one of these prompts</p>
-            <p className="bot-empty-body">You can ask with or without an image. Attach a screenshot when the question is visual.</p>
+            <p className="bot-empty-body">Paste the exact question text for the best result. Attach a screenshot only when the problem is visual.</p>
             <div className="bot-quick-grid">
               {quickPrompts.map((prompt) => (
                 <button key={prompt} type="button" onClick={() => setInput(prompt)} className="bot-quick-btn focus-ring">

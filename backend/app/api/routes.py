@@ -4,8 +4,9 @@ import base64
 import logging
 import re
 from io import BytesIO
+from typing import Any
 
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
 from app.core.config import settings
@@ -52,6 +53,8 @@ ollama_service = OllamaService(
     base_url=settings.ollama_base_url,
     model_name=settings.ollama_model,
     enabled=settings.ollama_enabled,
+    request_timeout_seconds=settings.ollama_timeout_seconds,
+    retry_cooldown_seconds=settings.ollama_retry_cooldown_seconds,
 )
 session_store = SessionStore(ttl_minutes=settings.session_ttl_minutes)
 auth_service = AuthService()
@@ -117,6 +120,25 @@ def _extract_bearer_token(authorization: str | None) -> str:
     return parts[1].strip()
 
 
+def _get_current_user(authorization: str | None = Header(default=None)) -> AuthUser:
+    token = _extract_bearer_token(authorization)
+    return auth_service.verify_access_token(token)
+
+
+def _ensure_user_session(session_id: str | None, user: AuthUser) -> str:
+    try:
+        return session_store.ensure(session_id, owner_id=user.id)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail="Session does not belong to this user.") from exc
+
+
+def _get_user_session(session_id: str, user: AuthUser) -> dict[str, Any] | None:
+    try:
+        return session_store.get(session_id, owner_id=user.id)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail="Session does not belong to this user.") from exc
+
+
 @router.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -147,12 +169,15 @@ async def auth_login(payload: LoginRequest) -> AuthResponse:
 
 @router.get("/auth/me", response_model=AuthUser)
 async def auth_me(authorization: str | None = Header(default=None)) -> AuthUser:
-    token = _extract_bearer_token(authorization)
-    return auth_service.verify_access_token(token)
+    return _get_current_user(authorization)
 
 
 @router.post("/extract_captions", response_model=ExtractCaptionsResponse)
-async def extract_captions(payload: ExtractCaptionsRequest) -> ExtractCaptionsResponse:
+async def extract_captions(
+    payload: ExtractCaptionsRequest,
+    current_user: AuthUser = Depends(_get_current_user),
+) -> ExtractCaptionsResponse:
+    del current_user
     try:
         result = await transcript_service.extract(payload.youtube_url, payload.language)
         return ExtractCaptionsResponse(
@@ -171,7 +196,11 @@ async def extract_captions(payload: ExtractCaptionsRequest) -> ExtractCaptionsRe
 
 
 @router.post("/video_meta", response_model=VideoMetaResponse)
-async def video_meta(payload: ExtractCaptionsRequest) -> VideoMetaResponse:
+async def video_meta(
+    payload: ExtractCaptionsRequest,
+    current_user: AuthUser = Depends(_get_current_user),
+) -> VideoMetaResponse:
+    del current_user
     try:
         data = await transcript_service.get_video_meta(payload.youtube_url)
         return VideoMetaResponse(
@@ -188,8 +217,12 @@ async def video_meta(payload: ExtractCaptionsRequest) -> VideoMetaResponse:
 
 
 @router.post("/summarize", response_model=SummarizeResponse)
-async def summarize(payload: SummarizeRequest) -> SummarizeResponse:
+async def summarize(
+    payload: SummarizeRequest,
+    current_user: AuthUser = Depends(_get_current_user),
+) -> SummarizeResponse:
     cleaned_transcript = clean_transcript_text(payload.transcript)
+    session_id = _ensure_user_session(payload.session_id, current_user)
 
     try:
         summary = _run_with_fallback_chain(
@@ -204,24 +237,27 @@ async def summarize(payload: SummarizeRequest) -> SummarizeResponse:
         logger.exception("Summarization failed: %s", exc)
         raise _map_service_error(exc) from exc
 
-    session_id = session_store.ensure(payload.session_id)
-    session_store.set_transcript(session_id, cleaned_transcript)
-    session_store.set_summary(session_id, summary.model_dump())
+    session_store.set_transcript(session_id, cleaned_transcript, owner_id=current_user.id)
+    session_store.set_summary(session_id, summary.model_dump(), owner_id=current_user.id)
     session_store.set_retrieval_chunks(
         session_id,
         split_into_chunks(cleaned_transcript, max_chars=1400, overlap_chars=120, max_chunks=24),
+        owner_id=current_user.id,
     )
 
     return SummarizeResponse(session_id=session_id, summary=summary)
 
 
 @router.post("/chat", response_model=ChatResponse)
-async def chat(payload: ChatRequest) -> ChatResponse:
-    session_id = session_store.ensure(payload.session_id)
+async def chat(
+    payload: ChatRequest,
+    current_user: AuthUser = Depends(_get_current_user),
+) -> ChatResponse:
+    session_id = _ensure_user_session(payload.session_id, current_user)
 
     summary = payload.summary
     if not summary:
-        cached_summary = session_store.get_summary(session_id)
+        cached_summary = session_store.get_summary(session_id, owner_id=current_user.id)
         if cached_summary:
             summary = StructuredSummary(**cached_summary)
 
@@ -231,12 +267,12 @@ async def chat(payload: ChatRequest) -> ChatResponse:
             detail="No active summary found. Generate summary first or include summary in request.",
         )
 
-    retrieval_chunks = session_store.get_retrieval_chunks(session_id)
+    retrieval_chunks = session_store.get_retrieval_chunks(session_id, owner_id=current_user.id)
     if not retrieval_chunks:
-        session = session_store.get(session_id) or {}
+        session = _get_user_session(session_id, current_user) or {}
         retrieval_chunks = split_into_chunks(session.get("transcript", ""), max_chars=1400, overlap_chars=120, max_chunks=24)
         if retrieval_chunks:
-            session_store.set_retrieval_chunks(session_id, retrieval_chunks)
+            session_store.set_retrieval_chunks(session_id, retrieval_chunks, owner_id=current_user.id)
 
     context_chunks = select_top_chunks_for_query(payload.message, retrieval_chunks, top_k=4)
 
@@ -268,14 +304,17 @@ async def chat(payload: ChatRequest) -> ChatResponse:
         logger.exception("Chat generation failed: %s", exc)
         raise _map_service_error(exc) from exc
 
-    session_store.set_summary(session_id, summary.model_dump())
-    session_store.append_chat(session_id, "user", payload.message)
-    session_store.append_chat(session_id, "assistant", answer)
+    session_store.set_summary(session_id, summary.model_dump(), owner_id=current_user.id)
+    session_store.append_chat(session_id, "user", payload.message, owner_id=current_user.id)
+    session_store.append_chat(session_id, "assistant", answer, owner_id=current_user.id)
 
     return ChatResponse(session_id=session_id, answer=answer)
 
 
 def _decode_image_data_url(data_url: str) -> tuple[bytes, str]:
+    if len(data_url) > 11 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Image payload is too large. Maximum allowed size is 8 MB.")
+
     pattern = r"^data:(image/[a-zA-Z0-9.+-]+);base64,(.+)$"
     match = re.match(pattern, data_url.strip(), flags=re.DOTALL)
     if not match:
@@ -283,6 +322,9 @@ def _decode_image_data_url(data_url: str) -> tuple[bytes, str]:
 
     mime_type = match.group(1).lower().strip()
     payload = match.group(2).strip()
+    allowed_mime_types = {"image/jpeg", "image/png", "image/webp"}
+    if mime_type not in allowed_mime_types:
+        raise HTTPException(status_code=400, detail="Unsupported image type. Use JPEG, PNG, or WEBP.")
 
     try:
         image_bytes = base64.b64decode(payload, validate=True)
@@ -296,7 +338,11 @@ def _decode_image_data_url(data_url: str) -> tuple[bytes, str]:
 
 
 @router.post("/solver_chat", response_model=SolverChatResponse)
-async def solver_chat(payload: SolverChatRequest) -> SolverChatResponse:
+async def solver_chat(
+    payload: SolverChatRequest,
+    current_user: AuthUser = Depends(_get_current_user),
+) -> SolverChatResponse:
+    del current_user
     image_bytes: bytes | None = None
     image_mime_type: str | None = None
 
@@ -338,12 +384,15 @@ async def solver_chat(payload: SolverChatRequest) -> SolverChatResponse:
 
 
 @router.post("/mcq", response_model=MCQResponse)
-async def generate_mcq(payload: MCQRequest) -> MCQResponse:
-    session_id = session_store.ensure(payload.session_id)
+async def generate_mcq(
+    payload: MCQRequest,
+    current_user: AuthUser = Depends(_get_current_user),
+) -> MCQResponse:
+    session_id = _ensure_user_session(payload.session_id, current_user)
 
     summary = payload.summary
     if not summary:
-        cached_summary = session_store.get_summary(session_id)
+        cached_summary = session_store.get_summary(session_id, owner_id=current_user.id)
         if cached_summary:
             summary = StructuredSummary(**cached_summary)
 
@@ -353,12 +402,12 @@ async def generate_mcq(payload: MCQRequest) -> MCQResponse:
             detail="No active summary found. Generate summary first or include summary in request.",
         )
 
-    retrieval_chunks = session_store.get_retrieval_chunks(session_id)
+    retrieval_chunks = session_store.get_retrieval_chunks(session_id, owner_id=current_user.id)
     if not retrieval_chunks:
-        session = session_store.get(session_id) or {}
+        session = _get_user_session(session_id, current_user) or {}
         retrieval_chunks = split_into_chunks(session.get("transcript", ""), max_chars=1400, overlap_chars=120, max_chunks=24)
         if retrieval_chunks:
-            session_store.set_retrieval_chunks(session_id, retrieval_chunks)
+            session_store.set_retrieval_chunks(session_id, retrieval_chunks, owner_id=current_user.id)
 
     summary_query = build_query_from_summary(summary)
     context_chunks = select_top_chunks_for_query(summary_query, retrieval_chunks, top_k=8)
@@ -376,15 +425,18 @@ async def generate_mcq(payload: MCQRequest) -> MCQResponse:
         logger.exception("MCQ generation failed: %s", exc)
         raise _map_service_error(exc) from exc
 
-    session_store.set_summary(session_id, summary.model_dump())
-    session_store.set_mcqs(session_id, [item.model_dump() for item in mcqs])
+    session_store.set_summary(session_id, summary.model_dump(), owner_id=current_user.id)
+    session_store.set_mcqs(session_id, [item.model_dump() for item in mcqs], owner_id=current_user.id)
 
     return MCQResponse(session_id=session_id, mcqs=mcqs)
 
 
 @router.get("/pdf")
-async def download_pdf(session_id: str = Query(...)) -> StreamingResponse:
-    session = session_store.get(session_id)
+async def download_pdf(
+    session_id: str = Query(...),
+    current_user: AuthUser = Depends(_get_current_user),
+) -> StreamingResponse:
+    session = _get_user_session(session_id, current_user)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found or expired.")
 

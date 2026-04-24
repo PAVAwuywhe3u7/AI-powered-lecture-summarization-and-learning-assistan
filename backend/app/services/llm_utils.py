@@ -55,14 +55,7 @@ def normalize_mcq_item(item: dict[str, Any]) -> MCQItem:
     options = options[:4]
 
     if len(options) < 4:
-        fallback_pool = [
-            "Insufficient option generated",
-            "None of the above",
-            "Cannot be inferred",
-            "Requires more context",
-        ]
-        while len(options) < 4:
-            options.append(fallback_pool[len(options)])
+        raise ValueError("MCQ item does not contain four valid options.")
 
     raw_correct = item.get("correct_index", 0)
     if isinstance(raw_correct, str):
@@ -74,9 +67,14 @@ def normalize_mcq_item(item: dict[str, Any]) -> MCQItem:
 
     correct_index = max(0, min(int(raw_correct), 3))
 
+    question = str(item.get("question", "")).strip()
+    explanation = str(item.get("explanation", "")).strip()
+    if not question or not explanation:
+        raise ValueError("MCQ item is missing a question or explanation.")
+
     return MCQItem(
-        question=str(item.get("question", "")).strip() or "Question unavailable",
+        question=question,
         options=options,
         correct_index=correct_index,
-        explanation=str(item.get("explanation", "")).strip() or "No explanation provided.",
+        explanation=explanation,
     )

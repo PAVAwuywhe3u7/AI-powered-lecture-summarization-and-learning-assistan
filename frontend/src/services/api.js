@@ -44,6 +44,7 @@ async function requestWithFallback(executor, allowFallback = true) {
     : [activeBaseUrl];
 
   let lastError;
+  const previousBaseUrl = activeBaseUrl;
 
   for (const baseUrl of candidates) {
     activeBaseUrl = baseUrl;
@@ -58,6 +59,7 @@ async function requestWithFallback(executor, allowFallback = true) {
     }
   }
 
+  activeBaseUrl = previousBaseUrl;
   throw lastError;
 }
 
@@ -77,7 +79,7 @@ export async function checkApiHealth() {
 export async function authRegister(payload) {
   const response = await requestWithFallback(
     () => apiClient.post("/auth/register", payload),
-    true,
+    false,
   );
   return response.data;
 }
@@ -85,43 +87,43 @@ export async function authRegister(payload) {
 export async function authLogin(payload) {
   const response = await requestWithFallback(
     () => apiClient.post("/auth/login", payload),
-    true,
+    false,
   );
   return response.data;
 }
 
 export async function fetchAuthMe() {
-  const response = await requestWithFallback(() => apiClient.get("/auth/me"), true);
+  const response = await requestWithFallback(() => apiClient.get("/auth/me"), false);
   return response.data;
 }
 
 export async function extractCaptions(payload) {
-  const response = await requestWithFallback(() => apiClient.post("/extract_captions", payload), true);
+  const response = await requestWithFallback(() => apiClient.post("/extract_captions", payload), false);
   return response.data;
 }
 
 export async function fetchVideoMeta(payload) {
-  const response = await requestWithFallback(() => apiClient.post("/video_meta", payload), true);
+  const response = await requestWithFallback(() => apiClient.post("/video_meta", payload), false);
   return response.data;
 }
 
 export async function summarizeTranscript(payload) {
-  const response = await requestWithFallback(() => apiClient.post("/summarize", payload), true);
+  const response = await requestWithFallback(() => apiClient.post("/summarize", payload), false);
   return response.data;
 }
 
 export async function chatWithSummary(payload) {
-  const response = await requestWithFallback(() => apiClient.post("/chat", payload), true);
+  const response = await requestWithFallback(() => apiClient.post("/chat", payload), false);
   return response.data;
 }
 
 export async function solverChat(payload) {
-  const response = await requestWithFallback(() => apiClient.post("/solver_chat", payload), true);
+  const response = await requestWithFallback(() => apiClient.post("/solver_chat", payload), false);
   return response.data;
 }
 
 export async function generateMcq(payload) {
-  const response = await requestWithFallback(() => apiClient.post("/mcq", payload), true);
+  const response = await requestWithFallback(() => apiClient.post("/mcq", payload), false);
   return response.data;
 }
 
@@ -132,7 +134,7 @@ export async function downloadPdf(sessionId) {
         params: { session_id: sessionId },
         responseType: "blob",
       }),
-    true,
+    false,
   );
 
   const blob = new Blob([response.data], { type: "application/pdf" });
@@ -152,7 +154,12 @@ export function getErrorMessage(error) {
       return `Unable to reach API server at ${activeBaseUrl}. Ensure backend is running on port 8000 and CORS is configured for your frontend origin.`;
     }
 
-    const detail = error.response?.data?.detail;
+    const responseData = error.response?.data;
+    if (typeof responseData === "string" && responseData.trim()) {
+      return responseData.trim();
+    }
+
+    const detail = responseData?.detail;
     if (typeof detail === "string" && detail.trim()) {
       return detail;
     }

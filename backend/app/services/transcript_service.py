@@ -372,8 +372,10 @@ class TranscriptService:
             transcript = fallback_transcript
 
         if not transcript:
-            used_title_fallback = True
-            transcript = self._build_title_fallback_text(metadata)
+            raise ValueError(
+                "Transcript could not be extracted from this video. "
+                "Try a video with captions, paste the transcript, or upload lecture text."
+            )
 
         if len(transcript.strip()) < 10:
             transcript = (

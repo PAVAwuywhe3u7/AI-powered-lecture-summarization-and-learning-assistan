@@ -19,6 +19,8 @@ const sourceModeValidators = {
   file: (state) => Boolean(state.fileContent.trim()),
   paste: (state) => Boolean(state.pastedText.trim()),
 };
+const MAX_SOURCE_FILE_BYTES = 10 * 1024 * 1024;
+const MAX_PDF_PAGES = 80;
 
 let pdfJsLoaderPromise = null;
 
@@ -41,6 +43,9 @@ async function extractTextFromPdfFile(file) {
   const buffer = await file.arrayBuffer();
   const loadingTask = pdfjs.getDocument({ data: buffer });
   const pdf = await loadingTask.promise;
+  if (pdf.numPages > MAX_PDF_PAGES) {
+    throw new Error(`PDF is too long. Maximum allowed pages: ${MAX_PDF_PAGES}.`);
+  }
 
   const pageTexts = [];
   for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
@@ -187,6 +192,9 @@ function HomePage() {
     }
 
     try {
+      if (file.size > MAX_SOURCE_FILE_BYTES) {
+        throw new Error("File is too large. Maximum allowed size is 10 MB.");
+      }
       const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
       const text = isPdf ? await extractTextFromPdfFile(file) : await file.text();
       if (!text.trim()) {
@@ -218,6 +226,12 @@ function HomePage() {
         thumbnail_url: data.thumbnail_url,
         channel_title: data.channel_title || "",
       });
+
+      if (data.used_title_fallback) {
+        throw new Error(
+          "Captions could not be extracted for this video. Paste the transcript or upload lecture text instead.",
+        );
+      }
 
       return data.transcript;
     }

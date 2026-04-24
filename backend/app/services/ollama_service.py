@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import time
 from typing import Any
 
 import httpx
@@ -21,18 +22,49 @@ from app.services.pipeline_utils import clean_transcript_text, split_into_chunks
 
 
 class OllamaService:
-    def __init__(self, base_url: str, model_name: str, enabled: bool = True) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        model_name: str,
+        enabled: bool = True,
+        request_timeout_seconds: float = 8.0,
+        retry_cooldown_seconds: float = 60.0,
+    ) -> None:
         self._enabled = enabled
         self._base_url = base_url.rstrip("/")
         self._model_name = model_name
+        self._request_timeout_seconds = max(1.0, float(request_timeout_seconds))
+        self._retry_cooldown_seconds = max(0.0, float(retry_cooldown_seconds))
+        self._retry_after_monotonic = 0.0
+        self._last_unavailable_reason = ""
 
     @property
     def enabled(self) -> bool:
         return self._enabled
 
+    def _check_retry_window(self) -> None:
+        if self._retry_after_monotonic and time.monotonic() < self._retry_after_monotonic:
+            if self._last_unavailable_reason:
+                raise RuntimeError(
+                    "Ollama is temporarily unavailable. "
+                    f"Last error: {self._last_unavailable_reason}"
+                )
+            raise RuntimeError("Ollama is temporarily unavailable.")
+
+    def _mark_unavailable(self, reason: str) -> None:
+        self._last_unavailable_reason = reason.strip() or "Unknown Ollama error."
+        if self._retry_cooldown_seconds > 0:
+            self._retry_after_monotonic = time.monotonic() + self._retry_cooldown_seconds
+
+    def _clear_unavailable(self) -> None:
+        self._retry_after_monotonic = 0.0
+        self._last_unavailable_reason = ""
+
     def _generate(self, prompt: str, temperature: float = 0.2, images: list[str] | None = None) -> str:
         if not self._enabled:
             raise RuntimeError("Ollama fallback is disabled.")
+
+        self._check_retry_window()
 
         url = f"{self._base_url}/api/generate"
         payload: dict[str, Any] = {
@@ -47,22 +79,28 @@ class OllamaService:
             payload["images"] = images
 
         try:
-            response = httpx.post(url, json=payload, timeout=120)
+            response = httpx.post(url, json=payload, timeout=self._request_timeout_seconds)
         except Exception as exc:
+            self._mark_unavailable(str(exc))
             raise RuntimeError(f"Ollama request failed: {exc}") from exc
 
         if response.status_code >= 400:
-            raise RuntimeError(f"Ollama request failed ({response.status_code}): {response.text.strip()}")
+            message = f"Ollama request failed ({response.status_code}): {response.text.strip()}"
+            self._mark_unavailable(message)
+            raise RuntimeError(message)
 
         try:
             data = response.json()
         except Exception as exc:
+            self._mark_unavailable(f"Ollama returned non-JSON response: {exc}")
             raise RuntimeError(f"Ollama returned non-JSON response: {exc}") from exc
 
         text = str(data.get("response", "")).strip()
         if not text:
+            self._mark_unavailable("Ollama returned an empty response.")
             raise RuntimeError("Ollama returned an empty response.")
 
+        self._clear_unavailable()
         return text
 
     def _generate_json(self, prompt: str, temperature: float = 0.2) -> Any:

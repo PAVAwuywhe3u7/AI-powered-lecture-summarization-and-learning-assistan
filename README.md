@@ -92,6 +92,7 @@ JWT_SECRET=replace_with_secure_random_secret
 JWT_EXP_MINUTES=10080
 MONGO_URI=mongodb+srv://username:password@cluster.mongodb.net/?retryWrites=true&w=majority
 MONGO_DB_NAME=edu_simplify
+ALLOW_IN_MEMORY_AUTH_FALLBACK=false
 ```
 
 ### Frontend (`frontend/.env`)

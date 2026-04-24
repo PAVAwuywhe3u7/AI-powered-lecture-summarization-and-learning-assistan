@@ -26,11 +26,184 @@ def _shorten(text: str, max_chars: int = 180) -> str:
 
 
 def _trim_items(items: list[str], label: str, min_items: int = 4, max_items: int = 8) -> list[str]:
+    del label
+    del min_items
     values = [_shorten(item, 180) for item in dedupe_strings(items) if len(item.strip()) > 8]
-    values = values[:max_items]
-    while len(values) < min_items:
-        values.append(f"{label} {len(values) + 1}: Connect this point to the lecture's core objective.")
-    return values
+    return values[:max_items]
+
+
+GENERIC_CHAT_PROMPTS = (
+    "explain this simply",
+    "explain it simply",
+    "explain in simple terms",
+    "simple terms",
+    "short answer",
+    "brief answer",
+    "more detail",
+    "tell me more",
+    "explain more",
+    "what about this",
+    "why is that",
+    "core concept",
+    "main concept",
+)
+
+GENERIC_SOLVER_PROMPTS = (
+    "solve this",
+    "solve it",
+    "step by step",
+    "clear step-by-step reasoning",
+    "shortest exam method",
+    "final answer",
+    "what is the answer",
+    "explain the uploaded screenshot",
+    "please solve the uploaded image",
+)
+
+CONTEXT_REFERENCE_WORDS = {
+    "this",
+    "that",
+    "it",
+    "these",
+    "those",
+    "same",
+    "above",
+    "previous",
+    "earlier",
+    "again",
+    "more",
+}
+
+
+def _normalize_prompt(text: str) -> str:
+    return re.sub(r"\s+", " ", (text or "")).strip()
+
+
+def _contains_phrase(text: str, phrases: tuple[str, ...]) -> bool:
+    lowered = text.lower()
+    return any(phrase in lowered for phrase in phrases)
+
+
+def _is_context_dependent_request(message: str) -> bool:
+    lowered = _normalize_prompt(message).lower()
+    if not lowered:
+        return False
+
+    tokens = set(re.findall(r"[a-z]+", lowered))
+    return bool(tokens & CONTEXT_REFERENCE_WORDS) or _contains_phrase(lowered, GENERIC_CHAT_PROMPTS + GENERIC_SOLVER_PROMPTS)
+
+
+def _is_generic_chat_prompt(message: str) -> bool:
+    lowered = _normalize_prompt(message).lower()
+    if not lowered:
+        return True
+
+    tokens = [token for token in tokenize_words(lowered) if token not in STOPWORDS]
+    if _contains_phrase(lowered, GENERIC_CHAT_PROMPTS):
+        return True
+
+    return len(tokens) <= 3 and any(word in lowered for word in {"explain", "answer", "summary", "concept", "definition"})
+
+
+def _is_generic_solver_prompt(message: str) -> bool:
+    lowered = _normalize_prompt(message).lower()
+    if not lowered:
+        return True
+
+    tokens = [token for token in tokenize_words(lowered) if token not in STOPWORDS]
+    if _contains_phrase(lowered, GENERIC_SOLVER_PROMPTS):
+        return True
+
+    return len(tokens) <= 4 and any(word in lowered for word in {"solve", "answer", "steps", "method", "explain", "help"})
+
+
+def _find_recent_message(
+    history: list[ChatMessage],
+    *,
+    role: str | None = None,
+    exclude_text: str = "",
+    skip_generic=None,
+) -> str:
+    excluded = _normalize_prompt(exclude_text).lower()
+
+    for item in reversed(history):
+        if role and item.role != role:
+            continue
+
+        content = _normalize_prompt(item.content)
+        if not content:
+            continue
+        if excluded and content.lower() == excluded:
+            continue
+        if skip_generic and skip_generic(content):
+            continue
+        return content
+
+    return ""
+
+
+def _resolve_chat_reference(question: str, history: list[ChatMessage]) -> str:
+    normalized = _normalize_prompt(question)
+    if not normalized:
+        return ""
+
+    if not (_is_context_dependent_request(normalized) or _is_generic_chat_prompt(normalized)):
+        return normalized
+
+    previous_user = _find_recent_message(
+        history,
+        role="user",
+        exclude_text=normalized,
+        skip_generic=_is_generic_chat_prompt,
+    )
+    if previous_user:
+        return f"{normalized}\nReference topic: {previous_user}"
+
+    previous_assistant = _find_recent_message(history, role="assistant", exclude_text=normalized)
+    if previous_assistant:
+        return f"{normalized}\nReference answer: {previous_assistant}"
+
+    return normalized
+
+
+def _resolve_solver_reference(question: str, history: list[ChatMessage]) -> tuple[str, bool]:
+    normalized = _normalize_prompt(question)
+    if not normalized:
+        return "", False
+
+    if not (_is_context_dependent_request(normalized) or _is_generic_solver_prompt(normalized)):
+        return normalized, False
+
+    previous_problem = _find_recent_message(
+        history,
+        role="user",
+        exclude_text=normalized,
+        skip_generic=_is_generic_solver_prompt,
+    )
+    if not previous_problem:
+        return normalized, False
+
+    if _is_generic_solver_prompt(normalized):
+        return previous_problem, True
+
+    return f"{previous_problem}\nFollow-up instruction: {normalized}", True
+
+
+def _detect_chat_intent(question: str) -> str:
+    lowered = question.lower()
+
+    if any(keyword in lowered for keyword in ("define", "definition", "meaning")):
+        return "definitions"
+    if any(keyword in lowered for keyword in ("example", "application", "use case")):
+        return "examples"
+    if any(keyword in lowered for keyword in ("revision", "revise", "exam", "memorize", "important")):
+        return "revision"
+    if any(keyword in lowered for keyword in ("overview", "summary", "overall")):
+        return "overview"
+    if any(keyword in lowered for keyword in ("simple", "simply", "plain", "easy")):
+        return "simple"
+
+    return "general"
 
 
 class LocalAIService:
@@ -157,53 +330,94 @@ class LocalAIService:
         history: list[ChatMessage],
         context_chunks: list[str] | None = None,
     ) -> str:
-        del history
-
-        question = (message or "").strip()
+        question = _normalize_prompt(message)
         if not question:
             return "Please ask a specific question about the current lecture summary."
 
+        effective_question = _resolve_chat_reference(question, history)
         contexts = context_chunks or []
         if contexts:
-            selected_contexts = select_top_chunks_for_query(question, contexts, top_k=3)
+            selected_contexts = select_top_chunks_for_query(effective_question, contexts, top_k=3)
         else:
             selected_contexts = []
 
-        knowledge_pool = (
-            summary.core_concepts
+        intent = _detect_chat_intent(question)
+        preferred_pool = {
+            "definitions": summary.key_definitions + summary.core_concepts,
+            "examples": summary.important_examples + summary.core_concepts,
+            "revision": summary.exam_revision_points + summary.core_concepts,
+            "overview": summary.overview_paragraphs + summary.core_concepts,
+            "simple": summary.core_concepts + summary.key_definitions,
+            "general": (
+                summary.core_concepts
+                + summary.key_definitions
+                + summary.important_examples
+                + summary.exam_revision_points
+            ),
+        }[intent]
+        knowledge_pool = dedupe_strings(
+            preferred_pool
+            + summary.core_concepts
             + summary.key_definitions
             + summary.important_examples
             + summary.exam_revision_points
         )
 
-        question_tokens = {token for token in tokenize_words(question) if token not in STOPWORDS}
+        question_tokens = {token for token in tokenize_words(effective_question) if token not in STOPWORDS}
         ranked_points: list[tuple[int, str]] = []
 
         for point in knowledge_pool:
             point_tokens = {token for token in tokenize_words(point) if token not in STOPWORDS}
             score = len(question_tokens & point_tokens)
+            if point in preferred_pool[:6]:
+                score += 1
             if score > 0:
                 ranked_points.append((score, point))
 
         ranked_points.sort(key=lambda item: item[0], reverse=True)
         best_points = [item[1] for item in ranked_points[:3]]
 
-        if not best_points and not selected_contexts:
+        if not best_points and not selected_contexts and not _is_generic_chat_prompt(question):
             return (
-                "Offline mode is active. I could not find a strong match in current notes. "
-                "Ask with terms from key definitions or core concepts."
+                "I could not find that topic in the current lecture notes. "
+                "Ask using lecture terms, or request definitions, examples, or revision points from the summary."
             )
 
-        lines = ["Answer grounded in current lecture notes:"]
+        if not best_points:
+            fallback_pool = {
+                "definitions": summary.key_definitions + summary.core_concepts,
+                "examples": summary.important_examples + summary.core_concepts,
+                "revision": summary.exam_revision_points + summary.core_concepts,
+                "overview": summary.overview_paragraphs + summary.core_concepts,
+                "simple": summary.core_concepts + summary.key_definitions,
+                "general": summary.core_concepts + summary.key_definitions,
+            }[intent]
+            best_points = dedupe_strings(fallback_pool)[:3]
+
+        lead_line = {
+            "definitions": "Key definitions from current lecture notes:",
+            "examples": "Examples grounded in current lecture notes:",
+            "revision": "Revision points from current lecture notes:",
+            "overview": "Lecture overview from current notes:",
+            "simple": "Simple explanation from current lecture notes:",
+            "general": "Answer grounded in current lecture notes:",
+        }[intent]
+
+        lines = [lead_line]
         for point in best_points:
             lines.append(f"- {_shorten(point, 170)}")
+
+        if intent == "simple" and summary.key_definitions:
+            simple_anchor = _shorten(summary.key_definitions[0], 170)
+            if simple_anchor.lower() not in {item.lower() for item in best_points}:
+                lines.append(f"- In simpler exam wording: {simple_anchor}")
 
         if selected_contexts:
             lines.append("Supporting lecture context:")
             for chunk in selected_contexts[:2]:
                 lines.append(f"- {_shorten(chunk, 190)}")
 
-        lines.append("If needed, ask for a short 5-mark exam answer format.")
+        lines.append("Ask for a 2-mark, 5-mark, or revision-bullet format if you want a tighter answer.")
         return "\n".join(lines)
 
     def generate_mcqs(self, summary: StructuredSummary, context_chunks: list[str] | None = None) -> list[MCQItem]:
@@ -266,38 +480,57 @@ class LocalAIService:
         image_mime_type: str | None = None,
         image_data_url: str | None = None,
     ) -> str:
-        del history
         del image_bytes
         del image_mime_type
 
-        question = re.sub(r"\s+", " ", (message or "")).strip()
+        question = _normalize_prompt(message)
         if not question and image_data_url:
             return (
                 "Offline mode cannot read image content directly. "
                 "Please type the exact problem statement, and I will solve it step-by-step."
             )
 
+        working_question, used_history_context = _resolve_solver_reference(question, history)
         prefix = (
             "I cannot parse the uploaded image offline, so I will solve from your typed text.\n\n"
             if image_data_url
             else ""
         )
+        history_note = (
+            "Using your earlier homework message as the missing problem context.\n\n"
+            if used_history_context
+            else ""
+        )
 
-        arithmetic = self._solve_arithmetic(question)
+        arithmetic = self._solve_arithmetic(working_question)
         if arithmetic:
-            return prefix + arithmetic
+            return prefix + history_note + arithmetic
 
-        linear = self._solve_linear_equation(question)
+        linear = self._solve_linear_equation(working_question)
         if linear:
-            return prefix + linear
+            return prefix + history_note + linear
 
-        return prefix + (
-            "Offline solver framework:\n"
-            "1. Identify known values and unknowns.\n"
-            "2. Select formula/algorithm.\n"
-            "3. Substitute and simplify carefully.\n"
-            "4. Verify result with units and logic.\n\n"
-            "Send the exact equation, code snippet, or full problem text for a precise solution."
+        code_help = self._solve_code_debug_prompt(working_question)
+        if code_help:
+            return prefix + history_note + code_help
+
+        if _is_generic_solver_prompt(question) and not used_history_context:
+            return prefix + history_note + (
+                "Offline solver needs the actual problem statement to finish the solution.\n"
+                "- For math: paste the exact equation or numerical values with units.\n"
+                "- For coding: paste the code snippet and full error message.\n"
+                "- For science/word problems: paste the full question text and what must be found."
+            )
+
+        breakdown = self._build_problem_breakdown(working_question)
+        if breakdown:
+            return prefix + history_note + breakdown
+
+        return prefix + history_note + (
+            "Offline solver needs the actual problem statement to finish the solution.\n"
+            "- For math: paste the exact equation or numerical values with units.\n"
+            "- For coding: paste the code snippet and full error message.\n"
+            "- For science/word problems: paste the full question text and what must be found."
         )
 
     @staticmethod
@@ -332,29 +565,42 @@ class LocalAIService:
         if not question:
             return None
 
-        candidate = question.strip().replace("^", "**")
-        if not re.fullmatch(r"[0-9\.\+\-\*\/\(\)\s%*]+", candidate):
-            lowered = candidate.lower()
-            for prefix in ("calculate", "compute", "evaluate", "solve"):
-                if lowered.startswith(prefix):
-                    candidate = candidate[len(prefix) :].strip(" :")
-                    break
+        raw_question = question.strip().replace("^", "**")
+        candidates = [raw_question]
+        lowered = raw_question.lower()
 
-        if not re.fullmatch(r"[0-9\.\+\-\*\/\(\)\s%*]+", candidate):
-            return None
+        for prefix in ("calculate", "compute", "evaluate", "solve"):
+            if lowered.startswith(prefix):
+                candidates.append(raw_question[len(prefix) :].strip(" :"))
 
-        try:
-            value = self._safe_eval(candidate)
-        except Exception:
-            return None
-
-        value_text = str(int(round(value))) if abs(value - round(value)) < 1e-9 else f"{value:.6f}".rstrip("0").rstrip(".")
-        return (
-            "Step-by-step:\n"
-            f"1. Expression recognized: {candidate}\n"
-            "2. Evaluate by operator precedence.\n"
-            f"3. Final value = {value_text}"
+        candidates.extend(
+            match.strip()
+            for match in re.findall(r"(?<![A-Za-z])[0-9\.\+\-\*\/\(\)\s%]{5,}", raw_question)
+            if any(operator in match for operator in "+-*/%")
         )
+
+        for candidate in dedupe_strings(candidates):
+            if not re.fullmatch(r"[0-9\.\+\-\*\/\(\)\s%*]+", candidate):
+                continue
+
+            try:
+                value = self._safe_eval(candidate)
+            except Exception:
+                continue
+
+            value_text = (
+                str(int(round(value)))
+                if abs(value - round(value)) < 1e-9
+                else f"{value:.6f}".rstrip("0").rstrip(".")
+            )
+            return (
+                "Step-by-step:\n"
+                f"1. Expression recognized: {candidate}\n"
+                "2. Evaluate by operator precedence.\n"
+                f"3. Final value = {value_text}"
+            )
+
+        return None
 
     @staticmethod
     def _parse_coeff(value: str) -> float:
@@ -370,14 +616,14 @@ class LocalAIService:
             return None
 
         pattern = re.compile(
-            r"^\s*([+-]?\s*\d*\.?\d*)\s*x\s*([+-]\s*\d*\.?\d+)?\s*=\s*([+-]?\s*\d*\.?\d+)\s*$",
+            r"([+-]?\s*\d*\.?\d*)\s*([A-Za-z])\s*([+-]\s*\d*\.?\d+)?\s*=\s*([+-]?\s*\d*\.?\d+)",
             flags=re.IGNORECASE,
         )
-        match = pattern.match(question)
+        match = pattern.search(question)
         if not match:
             return None
 
-        a_raw, b_raw, c_raw = match.groups()
+        a_raw, variable, b_raw, c_raw = match.groups()
         try:
             a = self._parse_coeff(a_raw)
             b = float((b_raw or "0").replace(" ", ""))
@@ -386,13 +632,95 @@ class LocalAIService:
             return None
 
         if abs(a) < 1e-12:
-            return "This equation has no single linear solution because coefficient of x is zero."
+            return f"This equation has no single linear solution because coefficient of {variable} is zero."
 
-        x = (c - b) / a
-        x_text = f"{x:.6f}".rstrip("0").rstrip(".")
+        solution = (c - b) / a
+        solution_text = f"{solution:.6f}".rstrip("0").rstrip(".")
         return (
             "Linear equation solution:\n"
-            f"1. Standard form: {a}x + ({b}) = {c}\n"
-            f"2. Rearranged: {a}x = {c - b}\n"
-            f"3. x = {x_text}"
+            f"1. Standard form: {a}{variable} + ({b}) = {c}\n"
+            f"2. Rearranged: {a}{variable} = {c - b}\n"
+            f"3. {variable} = {solution_text}"
         )
+
+    def _solve_code_debug_prompt(self, question: str) -> str | None:
+        lowered = question.lower()
+        if "```" not in question and not any(
+            marker in lowered
+            for marker in (
+                "error",
+                "exception",
+                "traceback",
+                "syntaxerror",
+                "typeerror",
+                "nameerror",
+                "indexerror",
+                "keyerror",
+                "attributeerror",
+            )
+        ):
+            return None
+
+        error_match = re.search(r"\b([A-Za-z]+Error|Exception)\b", question)
+        error_name = error_match.group(1) if error_match else "runtime error"
+        tips = {
+            "SyntaxError": "Check punctuation, indentation, and unmatched brackets on the flagged line.",
+            "TypeError": "Check data types flowing into the operation or function call that failed.",
+            "NameError": "Check whether the variable or function name was defined before use.",
+            "IndexError": "Check the list/string length before accessing that index.",
+            "KeyError": "Check whether the dictionary key exists before reading it.",
+            "AttributeError": "Check the object type and whether that attribute or method exists on it.",
+        }
+        focused_tip = tips.get(error_name, "Read the first failing line carefully and inspect the values reaching it.")
+
+        return (
+            "Offline coding-help mode:\n"
+            f"1. Error detected: {error_name}\n"
+            f"2. First check: {focused_tip}\n"
+            "3. Then inspect the exact line mentioned in the error and the values passed into it.\n"
+            "4. Paste 10 to 20 lines around the failing code for a precise fix."
+        )
+
+    def _build_problem_breakdown(self, question: str) -> str | None:
+        normalized = _normalize_prompt(question)
+        if not normalized or len(tokenize_words(normalized)) < 4:
+            return None
+
+        numbers = re.findall(r"(?<![A-Za-z])[-+]?\d*\.?\d+(?:/\d+)?", normalized)
+        unknown_match = re.search(
+            r"\b(?:find|solve|determine|calculate|compute)\s+(?:for\s+)?([A-Za-z][A-Za-z0-9 _-]{0,28})",
+            normalized,
+            flags=re.IGNORECASE,
+        )
+        unknown = _shorten(unknown_match.group(1).strip(), 60) if unknown_match else "the required final quantity"
+
+        keyword_groups = [
+            "mass",
+            "force",
+            "acceleration",
+            "velocity",
+            "speed",
+            "distance",
+            "time",
+            "voltage",
+            "current",
+            "resistance",
+            "probability",
+            "array",
+            "function",
+            "loop",
+        ]
+        detected_keywords = [keyword for keyword in keyword_groups if keyword in normalized.lower()]
+
+        lines = ["Offline problem breakdown:"]
+        if numbers:
+            lines.append(f"1. Known values detected: {', '.join(numbers[:6])}")
+        else:
+            lines.append("1. Known values: read all given quantities, constants, and units carefully.")
+        lines.append(f"2. Unknown to solve: {unknown}")
+        if detected_keywords:
+            lines.append(f"3. Likely topic/formula family: {', '.join(detected_keywords[:4])}")
+        else:
+            lines.append("3. Likely method: choose the formula or algorithm that connects the knowns to the unknown.")
+        lines.append("4. Paste the exact equation, code, or full question target if you want the final solved answer.")
+        return "\n".join(lines)

@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import html
 from datetime import datetime
 from io import BytesIO
 
@@ -14,15 +15,19 @@ from app.models.schemas import MCQItem, StructuredSummary
 
 class PDFService:
     @staticmethod
+    def _safe_text(value: str) -> str:
+        return html.escape(str(value or ""), quote=False)
+
+    @staticmethod
     def _section(story: list, title: str, items: list[str], styles: dict) -> None:
-        story.append(Paragraph(title, styles["section"]))
+        story.append(Paragraph(PDFService._safe_text(title), styles["section"]))
         if not items:
             story.append(Paragraph("No content generated.", styles["body"]))
             story.append(Spacer(1, 0.2 * cm))
             return
 
         for item in items:
-            story.append(Paragraph(f"- {item}", styles["body"]))
+            story.append(Paragraph(f"- {PDFService._safe_text(item)}", styles["body"]))
             story.append(Spacer(1, 0.15 * cm))
         story.append(Spacer(1, 0.2 * cm))
 
@@ -88,16 +93,17 @@ class PDFService:
         else:
             option_labels = ["A", "B", "C", "D"]
             for index, mcq in enumerate(mcqs, start=1):
-                story.append(Paragraph(f"Q{index}. {mcq.question}", styles["body"]))
+                story.append(Paragraph(f"Q{index}. {self._safe_text(mcq.question)}", styles["body"]))
                 for opt_index, option in enumerate(mcq.options):
-                    story.append(Paragraph(f"{option_labels[opt_index]}. {option}", styles["body"]))
+                    story.append(Paragraph(f"{option_labels[opt_index]}. {self._safe_text(option)}", styles["body"]))
                 story.append(
                     Paragraph(
-                        f"Correct: {option_labels[mcq.correct_index]}. {mcq.options[mcq.correct_index]}",
+                        f"Correct: {option_labels[mcq.correct_index]}. "
+                        f"{self._safe_text(mcq.options[mcq.correct_index])}",
                         styles["body"],
                     )
                 )
-                story.append(Paragraph(f"Explanation: {mcq.explanation}", styles["body"]))
+                story.append(Paragraph(f"Explanation: {self._safe_text(mcq.explanation)}", styles["body"]))
                 story.append(Spacer(1, 0.25 * cm))
 
         doc.build(story)

@@ -25,7 +25,7 @@ function readStoredUser() {
 }
 
 export function AuthProvider({ children }) {
-  const [token, setToken] = useState(() => window.localStorage.getItem(AUTH_TOKEN_KEY) || "");
+  const [token, setToken] = useState(() => window.sessionStorage.getItem(AUTH_TOKEN_KEY) || "");
   const [user, setUser] = useState(readStoredUser);
   const [isChecking, setIsChecking] = useState(true);
 
@@ -39,6 +39,9 @@ export function AuthProvider({ children }) {
     async function bootstrap() {
       if (!token) {
         if (mounted) {
+          setUser(null);
+          window.localStorage.removeItem(AUTH_USER_KEY);
+          window.localStorage.removeItem(AUTH_TOKEN_KEY);
           setIsChecking(false);
         }
         return;
@@ -58,8 +61,9 @@ export function AuthProvider({ children }) {
         setToken("");
         setUser(null);
         setAuthToken("");
-        window.localStorage.removeItem(AUTH_TOKEN_KEY);
+        window.sessionStorage.removeItem(AUTH_TOKEN_KEY);
         window.localStorage.removeItem(AUTH_USER_KEY);
+        window.localStorage.removeItem(AUTH_TOKEN_KEY);
       } finally {
         if (mounted) {
           setIsChecking(false);
@@ -84,8 +88,9 @@ export function AuthProvider({ children }) {
     setToken(nextToken);
     setUser(nextUser);
     setAuthToken(nextToken);
-    window.localStorage.setItem(AUTH_TOKEN_KEY, nextToken);
+    window.sessionStorage.setItem(AUTH_TOKEN_KEY, nextToken);
     window.localStorage.setItem(AUTH_USER_KEY, JSON.stringify(nextUser));
+    window.localStorage.removeItem(AUTH_TOKEN_KEY);
     return nextUser;
   };
 
@@ -103,8 +108,9 @@ export function AuthProvider({ children }) {
     setToken("");
     setUser(null);
     setAuthToken("");
-    window.localStorage.removeItem(AUTH_TOKEN_KEY);
+    window.sessionStorage.removeItem(AUTH_TOKEN_KEY);
     window.localStorage.removeItem(AUTH_USER_KEY);
+    window.localStorage.removeItem(AUTH_TOKEN_KEY);
   };
 
   const value = useMemo(

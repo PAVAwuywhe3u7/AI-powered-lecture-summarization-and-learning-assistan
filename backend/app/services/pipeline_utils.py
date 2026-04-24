@@ -210,12 +210,11 @@ def _shorten(text: str, max_chars: int = 190) -> str:
 
 
 def _ensure_item_range(items: list[str], label: str, min_items: int = 4, max_items: int = 8) -> list[str]:
+    del label
+    del min_items
     normalized = dedupe_strings(items)
     normalized = [_shorten(item, 180) for item in normalized if len(item.strip()) > 8]
-    normalized = normalized[:max_items]
-    while len(normalized) < min_items:
-        normalized.append(f"{label} {len(normalized) + 1}: Revise this idea and connect it to the lecture theme.")
-    return normalized
+    return normalized[:max_items]
 
 
 def build_three_paragraph_overview(source_text: str, concepts: list[str]) -> list[str]:
